@@ -1,7 +1,7 @@
 // ========== Imports ==========
 // React and hooks
 import { useEffect, useRef, useState } from 'react';
-import { useForm } from '@inertiajs/react';
+import { useForm, usePage } from '@inertiajs/react';
 
 // External libraries
 import axios from 'axios';
@@ -39,6 +39,9 @@ export default function Chat() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const [isConnected, setIsConnected] = useState(false);
+    
+    // Get current user from Inertia page props
+    const { auth } = usePage().props as any;
     
     // Reference to scroll to the bottom of messages
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -80,6 +83,22 @@ export default function Chat() {
         // Don't send empty messages
         if (!data.content.trim()) return;
         
+        // Create a temporary message to display immediately
+        const tempMessage: Message = {
+            // Use a temporary negative ID to distinguish from server messages
+            id: -Date.now(),
+            content: data.content,
+            user: {
+                // Use the actual user data from auth props
+                id: auth.user.id,
+                name: auth.user.name
+            },
+            created_at: new Date().toLocaleTimeString()
+        };
+        
+        // Add the message to the UI immediately
+        setMessages(prevMessages => [...prevMessages, tempMessage]);
+        
         try {
             // Send the message to the server
             await axios.post('/api/messages', data);
@@ -87,9 +106,11 @@ export default function Chat() {
             // Clear the input field
             reset('content');
             
-            // The real-time update will happen via Echo
+            // The real message with proper IDs will come through Echo
         } catch (error) {
             console.error('Error sending message:', error);
+            // If error, remove the temporary message
+            setMessages(prevMessages => prevMessages.filter(msg => msg.id !== tempMessage.id));
         }
     };
 
@@ -155,12 +176,19 @@ export default function Chat() {
         console.log('New message received:', event.message);
         
         setMessages(prevMessages => {
-            // Prevent duplicate messages
+            // Prevent duplicate messages by checking if the ID already exists
             const isDuplicate = prevMessages.some(msg => msg.id === event.message.id);
             if (isDuplicate) return prevMessages;
             
-            // Add new message to the list
-            return [...prevMessages, event.message];
+            // Check if this is a confirmation of a message we sent (matching content)
+            // Remove any temporary message with negative ID and same content
+            const tempMessages = prevMessages.filter(msg => {
+                // Keep all messages that aren't temporary or don't match the content
+                return !(msg.id < 0 && msg.content === event.message.content);
+            });
+            
+            // Add new message from server to the list
+            return [...tempMessages, event.message];
         });
         
         // Scroll to show new message
